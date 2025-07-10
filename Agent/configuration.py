@@ -1,18 +1,17 @@
 
 
 import os
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from typing import Any, Optional
 
 from langchain_core.runnables import RunnableConfig
-from typing_extensions import Annotated
 from dataclasses import dataclass
 
 @dataclass(kw_only=True)
 class Configuration:
     """The configuration for the agent."""
     """The configurable fields for the chatbot."""
-    user_id: str = "default-user"
+    user_id: str = "Zen"
     asst_role: str ="You are an intelligent assistant equipped with a suite of tools, including code execution capabilities."
 
     @classmethod

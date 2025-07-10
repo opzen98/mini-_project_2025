@@ -1,8 +1,7 @@
 {
   "dockerfile_lines": [],
   "graphs": {
-    "AgentMemory": "./MCPAgent2.py:graph",
-    "MCPAgent1": "./MCPAgent.py:graph"
+    "ReactMem0MCPAgent": "./MCPAgent2.py:graph"
   },
   "env": "./.env",
   "python_version": "3.11",
