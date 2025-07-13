@@ -4,16 +4,24 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import MessagesState, StateGraph, START, END
 from langchain_core.messages import SystemMessage, HumanMessage, RemoveMessage
 from langgraph.prebuilt import tools_condition, ToolNode
+#from IPython.display import Image, display
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_core.runnables import RunnableConfig
 from langchain.chat_models import init_chat_model
+#from configuration import system_message
 import asyncio
 import json
-import os
 from mem0 import Memory
 import configuration
 
+
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from langchain_mcp_adapters.tools import load_mcp_tools
+
+
 llm = init_chat_model("openai:gpt-4o-mini", temperature=0.0)
+# Set necessary environment variables for your chosen LangChain provider
 
 # Pass the initialized model to the config
 llmconfig = {
@@ -23,7 +31,7 @@ llmconfig = {
             "model": llm
         }
     },
-    "vector_store": {
+        "vector_store": {
         "provider": "supabase",
         "config": {
             "connection_string": os.environ['DATABASE_URL'],
@@ -34,37 +42,53 @@ llmconfig = {
 
 mem0 = Memory.from_config(llmconfig)
 
+#with open('/deps/__outer_Agent/config.json', 'r') as f:
+
 with open('config.json', 'r') as f:
     config = json.load(f)
 
-client = MultiServerMCPClient(connections=config)
+#client = MultiServerMCPClient(connections=config)
 
-client_cache = None  
-# Cache for MCP client to avoid repeated async calls
-# Cache for tools to avoid repeated async calls
-tools_cache = None
+# async def gets_tools():
+#     tools = await client.get_tools()
+#     return tools
+#     #llm_with_tools = llm.bind_tools(tools)
+#     # rest of the code
 
-async def get_mcp_client():
-    """Get or create the MCP client."""
-    global client_cache
-    if client_cache is None:
-        client_cache = MultiServerMCPClient(connections=config)
-    return client_cache
+# tools = asyncio.run(gets_tools())
 
-async def get_tools():
-    global tools_cache
-    if tools_cache is None:
-        client = await get_mcp_client()
-        try:
-            tools_cache = await client.get_tools()
-        except Exception as e:
-            print(f"Error fetching tools: {e}")
-            tools_cache = []
-    return tools_cache
+# Replace these imports:
 
-async def get_llm_with_tools():
-    tools = await get_tools()
-    return llm.bind_tools(tools)
+# …later, instead of:
+# client = MultiServerMCPClient(connections=config)
+# async def gets_tools():
+#     tools = await client.get_tools()
+#     return tools
+# tools = asyncio.run(gets_tools())
+
+# Use this instead:
+async def load_mcp_tools_from_config(cfg: dict[str, dict]) -> list:
+    all_tools = []
+    for name, conn in cfg.items():
+        # set up stdio params for each server
+        params = StdioServerParameters(
+            command=conn["command"],
+            args=conn.get("args", []),
+            env=conn.get("env"),
+        )
+        # open stdio transport → MCP session → load tools
+        async with stdio_client(params) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                await session.initialize()
+                tools = await load_mcp_tools(session)
+                all_tools.extend(tools)
+    return all_tools
+
+# actually load them
+tools = asyncio.run(load_mcp_tools_from_config(config))
+
+
+llm_with_tools = llm.bind_tools(tools)
 
 system_message_template ="""{asst_role}:\n. Your task is to solve user queries by reasoning step-by-step. The current datetime is: {now}
 This is your User Memories: User Memories:\n{memories_str}
@@ -82,18 +106,25 @@ for example
 ...
 ``` """
 
+
 class State(MessagesState):
     summary: str
+ #   mem0_user_id: str
 
-async def assistant(state: State, config: RunnableConfig):
+def assistant(state: State, config: RunnableConfig):
+
     configurable = configuration.Configuration.from_runnable_config(config)
     mem0_user_id = configurable.user_id
     assistant_role = configurable.asst_role
+
+    #mem0_user_id = config.get("user_id", "default-user")
+    #mem0_user_id = config.get("user_id", "default-user")
+    #assistant_role = config.get("asst_role", "You are an intelligent assistant equipped with a suite of tools, including code execution capabilities.")
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary = state.get("summary", "")
     message = state["messages"]
-
+    #user_id = state.get("user_id", "default_user")
     def ensure_str(x):
         if isinstance(x, str):
             return x
@@ -117,11 +148,8 @@ async def assistant(state: State, config: RunnableConfig):
     else:
         messages = [SystemMessage(content= sys_msg)] + message
     
-    # Get LLM with tools asynchronously
-    llm_with_tools = await get_llm_with_tools()
     response = llm_with_tools.invoke(messages)
-    
-    # Store the interaction in Mem0
+    # # Store the interaction in Mem0
     mem0.add(f"User: {last_content}\nAssistant: {response.content}", user_id=mem0_user_id)
     return {"messages": response}  
 
@@ -141,8 +169,12 @@ def preserve_msg(state: State):
     delete_ops = [RemoveMessage(id=msg.id) for msg in messages_to_remove]
     return {"messages": delete_ops}
 
+
+# Determine whether to end or summarize the conversation
 def should_continue(state: State):
+    
     """Return the next node to execute."""
+    
     messages = state["messages"]
     
     # If there are more than six messages, then we summarize the conversation
@@ -152,17 +184,21 @@ def should_continue(state: State):
     # Otherwise we can just end
     return END
 
+
 def summarize_conversation(state: State):
+    
     # First get the summary if it exists
     summary = state.get("summary", "")
 
     # Create our summarization prompt 
     if summary:
+        
         # If a summary already exists, add it to the prompt
         summary_message = (
             f"This is summary of the conversation to date: {summary}\n\n"
             "Extend the summary by taking into account the new messages above:"
         )
+        
     else:
         # If no summary exists, just create a new one
         summary_message = "Create a summary of the conversation above:"
@@ -173,49 +209,20 @@ def summarize_conversation(state: State):
     response = llm.invoke(messages)
     
     # Delete all but the 2 most recent messages and add our summary to the state 
+    #delete_messages = [RemoveMessage(id=m.id) for m in state["messages"][:-2]]
     return {"summary": response.content, "messages": state["messages"]}
-
-# Initialize tools asynchronously for the ToolNode
-async def initialize_tool_node():
-    tools = await get_tools()
-    if tools:
-        return ToolNode(tools)
-    else:
-        return lambda state, config: {"messages", []} 
-    
-
-# We need to create the tool node after getting tools
-tool_node = None
-
-async def get_tool_node():
-    global tool_node
-    if tool_node is None:
-        tool_node = await initialize_tool_node()
-    return tool_node
 
 # Define a sub graph
 workflow = StateGraph(State, config_schema=configuration.Configuration)
 workflow.add_node("preserve", preserve_msg)
 workflow.add_node("assistant", assistant)
-
-# We'll add the tools node dynamically
-async def tools_node_wrapper(state: State, config: RunnableConfig):
-    try:
-        node = await get_tool_node()
-        if callable(node):
-            return await node(state, config)
-        else:
-            return await node.ainvoke(state, config)
-    except Exception as e:
-        print(f"Error in tools node: {e}")
-        return {"messages": []}
-
-workflow.add_node("tools", tools_node_wrapper)
+workflow.add_node("tools", ToolNode(tools))
 workflow.add_edge(START, "preserve")
 workflow.add_edge("preserve", "assistant")
 workflow.add_conditional_edges("assistant", tools_condition)
 workflow.add_edge("tools", "assistant")
-
+#workflow.add_edge("preserve", "assistant")
+#memory = MemorySaver()
 graph3 = workflow.compile()
 
 # Define the main conversation flow
@@ -227,6 +234,23 @@ conv_flow.add_node(summarize_conversation)
 conv_flow.add_edge(START, "react")
 conv_flow.add_conditional_edges("react", should_continue)
 conv_flow.add_edge("summarize_conversation", END)
+#memory1 = MemorySaver()
 
 # Compile
 graph = conv_flow.compile()
+#display(Image(graph2.get_graph(xray=1).draw_mermaid_png()))
+
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"LangGraph API Running")
+
+if __name__ == "__main__":
+    # Keep this at the VERY BOTTOM of your script
+    server = HTTPServer(('0.0.0.0', 8000), SimpleHandler)
+    print("Starting HTTP server on port 8000...")
+    server.serve_forever()
+
