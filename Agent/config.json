@@ -1,41 +1,41 @@
 {
-    "filesystem": {
-        "transport":"stdio",
-        "command": "npx",
-        "args": [
-            "-y",
-            "@modelcontextprotocol/server-filesystem",
-            "/Users/zen/Desktop",
-            "/Users/zen/Downloads"
-        ]
-    },
-    "software-planning-tool": {
-      "command": "node",
-      "transport": "stdio",
+  "filesystem": {
+      "transport":"stdio",
+      "command": "npx",
       "args": [
-        "C:/Users/zen/Documents/Personal/mini projek/2025/mcp servers/Software-planning-mcp/build/index.js"
-      ],
-      "autoApprove": []
-    },
-    "brave-search": {
-      "command": "npx",
-      "transport": "stdio",
-      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-      "env": {
-        "BRAVE_API_KEY": "BSA3MN7to3ARJiVMYRRUJbRQThpZQcf"}
-    },
-    "todoist": {
-      "command": "npx",
-      "transport": "stdio",
-      "args": ["-y", "@abhiz123/todoist-mcp-server"],
-      "env": {
-        "TODOIST_API_TOKEN": "aa6d35e1a0f811986b9c83ec947e7f12514e23b8"
-      }
-    },
-    "e2b-server": {
-      "command": "npx",
-      "transport": "stdio",
-      "args": ["-y", "@e2b/mcp-server"],
-      "env": { "E2B_API_KEY": "e2b_8c251a42b623f4aaeac3210c072b594d9b9b89a1" }
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "/Users/zen/Desktop",
+          "/Users/zen/Downloads"
+      ]
+  },
+  "software-planning-tool": {
+    "command": "node",
+    "transport": "stdio",
+    "args": [
+      "C:/Users/zen/Documents/Personal/mini projek/2025/mcp servers/Software-planning-mcp/build/index.js"
+    ],
+    "autoApprove": []
+  },
+  "brave-search": {
+    "command": "npx",
+    "transport": "stdio",
+    "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+    "env": {
+      "BRAVE_API_KEY": "BSA3MN7to3ARJiVMYRRUJbRQThpZQcf"}
+  },
+  "todoist": {
+    "command": "npx",
+    "transport": "stdio",
+    "args": ["-y", "@abhiz123/todoist-mcp-server"],
+    "env": {
+      "TODOIST_API_TOKEN": "aa6d35e1a0f811986b9c83ec947e7f12514e23b8"
     }
+  },
+  "e2b-server": {
+    "command": "npx",
+    "transport": "stdio",
+    "args": ["-y", "@e2b/mcp-server"],
+    "env": { "E2B_API_KEY": "e2b_8c251a42b623f4aaeac3210c072b594d9b9b89a1" }
+  }
 }
