@@ -39,27 +39,14 @@ with open('config.json', 'r') as f:
 
 client = MultiServerMCPClient(connections=config)
 
-client_cache = None  
 # Cache for MCP client to avoid repeated async calls
 # Cache for tools to avoid repeated async calls
 tools_cache = None
 
-async def get_mcp_client():
-    """Get or create the MCP client."""
-    global client_cache
-    if client_cache is None:
-        client_cache = MultiServerMCPClient(connections=config)
-    return client_cache
-
 async def get_tools():
     global tools_cache
     if tools_cache is None:
-        client = await get_mcp_client()
-        try:
-            tools_cache = await client.get_tools()
-        except Exception as e:
-            print(f"Error fetching tools: {e}")
-            tools_cache = []
+        tools_cache = await client.get_tools()
     return tools_cache
 
 async def get_llm_with_tools():
@@ -178,10 +165,7 @@ def summarize_conversation(state: State):
 # Initialize tools asynchronously for the ToolNode
 async def initialize_tool_node():
     tools = await get_tools()
-    if tools:
-        return ToolNode(tools)
-    else:
-        return lambda state, config: {"messages", []} 
+    return ToolNode(tools)
     
 
 # We need to create the tool node after getting tools
@@ -200,15 +184,8 @@ workflow.add_node("assistant", assistant)
 
 # We'll add the tools node dynamically
 async def tools_node_wrapper(state: State, config: RunnableConfig):
-    try:
-        node = await get_tool_node()
-        if callable(node):
-            return await node(state, config)
-        else:
-            return await node.ainvoke(state, config)
-    except Exception as e:
-        print(f"Error in tools node: {e}")
-        return {"messages": []}
+    node = await get_tool_node()
+    return await node.ainvoke(state, config)
 
 workflow.add_node("tools", tools_node_wrapper)
 workflow.add_edge(START, "preserve")

@@ -134,7 +134,11 @@ ENV/
 env.bak/
 venv.bak/
 lc-academy-env/
-config.json
+
+# Files
+Agent/config.json
+Agent-Dev/config.json
+Agent-Sync/config.json
 
 # Spyder project settings
 .spyderproject
