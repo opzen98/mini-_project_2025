@@ -136,9 +136,9 @@ venv.bak/
 lc-academy-env/
 
 # Files
-Agent/config.json
+Agent-App/config.json
 Agent-Dev/config.json
-Agent-Sync/config.json
+Agent-Docker-Deployment/config.json
 
 # Spyder project settings
 .spyderproject

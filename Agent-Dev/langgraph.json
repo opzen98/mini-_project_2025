@@ -1,7 +1,8 @@
 {
-  "dockerfile_lines": [],
+  "dockerfile_lines": [
+  ],
   "graphs": {
-    "ReactMem0MCPAgent": "./MCP-Agent-Dev.py:graph"
+    "MCPAgent": "./MCP-Agent.py:graph"
   },
   "env": "./.env",
   "python_version": "3.11",
