@@ -176,7 +176,7 @@ def should_continue(state: State):
     messages = state["messages"]
     
     # Check if we need to summarize due to length
-    if len(messages) > 10:
+    if len(messages) > 5:
         return "summarize"
     
     # Otherwise, store memory and end
@@ -226,7 +226,6 @@ build.add_node("summarize", summarize_conversation)
 build.add_edge(START, "retrieve_memories")
 build.add_edge("retrieve_memories", "react_agent")
 build.add_edge("react_agent", "store_memory")
-#build.add_conditional_edges("store_memory", should_continue)
 build.add_conditional_edges(
     "store_memory", 
     should_continue,
