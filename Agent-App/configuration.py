@@ -11,7 +11,7 @@ from dataclasses import dataclass
 class Configuration:
     """The configuration for the agent."""
     """The configurable fields for the chatbot."""
-    user_id: str = "Zen"
+    user_id: str = "test"
     asst_role: str ="You are an intelligent assistant equipped with a suite of tools, including code execution capabilities."
 
     @classmethod

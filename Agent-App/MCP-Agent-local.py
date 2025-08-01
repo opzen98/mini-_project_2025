@@ -13,11 +13,18 @@ import os
 from mem0 import Memory
 import configuration
 from dotenv import load_dotenv
-from langgraph.checkpoint.memory import MemorySaver
-import json
+# Change this import to use AsyncPostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+# Fix for Windows event loop compatibility with psycopg
+import sys
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Load environment variables from .env file
 load_dotenv()
+
+DB_URI = "postgresql://postgres:432306@localhost:5432/MCPAgent?sslmode=disable"
 
 llm = init_chat_model("openai:gpt-4o-mini", temperature=0.0)
 
@@ -39,7 +46,6 @@ llmconfig = {
 }
 
 mem0 = Memory.from_config(llmconfig)
-
 
 def load_mcp_config():
     """Load MCP configuration and filter out disabled servers"""
@@ -110,8 +116,6 @@ def retrieve_memories(state: State, config: RunnableConfig):
     if state.get("memories_retrieved"):
         return {"messages": []}
     
-    configurable = configuration.Configuration.from_runnable_config(config)
-    mem0_user_id = configurable.user_id
     
     messages = state["messages"]
     
@@ -135,7 +139,7 @@ def retrieve_memories(state: State, config: RunnableConfig):
         "messages": []
     }
 
-def assistant(state: State, config: RunnableConfig):
+async def assistant(state: State, config: RunnableConfig):
     """Main assistant function with memory context"""
     configurable = configuration.Configuration.from_runnable_config(config)
     mem0_user_id = configurable.user_id
@@ -156,7 +160,8 @@ def assistant(state: State, config: RunnableConfig):
     else:
         messages = [SystemMessage(content=sys_msg)] + messages
     
-    response = llm_with_tools.invoke(messages)
+    # Use await since llm_with_tools should be async
+    response = await llm_with_tools.ainvoke(messages)
     
     # Store the response for later memory storage
     return {
@@ -182,13 +187,13 @@ def should_continue(state: State):
     messages = state["messages"]
     
     # Check if we need to summarize due to length
-    if len(messages) > 20:
+    if len(messages) > 10:
         return "summarize"
     
     # Otherwise, store memory and end
-    return "store_memory"
+    return "__end__"
 
-def summarize_conversation(state: State):
+async def summarize_conversation(state: State):
     """Summarize the conversation when it gets too long"""
     summary = state.get("summary", "")
     messages = state["messages"]
@@ -202,98 +207,107 @@ def summarize_conversation(state: State):
         summary_message = "Create a summary of the conversation above:"
 
     messages_with_prompt = messages + [HumanMessage(content=summary_message)]
-    response = llm.invoke(messages_with_prompt)
+    response = await llm.ainvoke(messages_with_prompt)
     
     return {"summary": response.content}
 
-# Create the main workflow
-workflow = StateGraph(State, config_schema=configuration.Configuration)
-
-# Add nodes
-workflow.add_node("preserve", preserve_msg)
-workflow.add_node("retrieve_memories", retrieve_memories)
-workflow.add_node("assistant", assistant)
-workflow.add_node("tools", ToolNode(tools))
-workflow.add_node("store_memory", store_memory)
-workflow.add_node("summarize", summarize_conversation)
-
-# Define the flow
-workflow.add_edge(START, "preserve")
-workflow.add_edge("preserve", "retrieve_memories")
-workflow.add_edge("retrieve_memories", "assistant")
-
-# ReAct loop: assistant -> tools -> assistant (until no more tools needed)
-workflow.add_conditional_edges("assistant", tools_condition)
-workflow.add_edge("tools", "assistant")
-
-# After assistant is done, decide next step
-workflow.add_conditional_edges("assistant", should_continue)
-
-# Handle memory storage and summarization
-workflow.add_edge("store_memory", END)
-workflow.add_edge("summarize", "store_memory")
-
-# Compile the graph
-memory1 = MemorySaver()
-graph = workflow.compile(checkpointer=memory1)
+async def get_chat_history(graph, thread_id):
+    all_states = [s for s in graph.get_state_history(thread_id)]
+    return all_states[-1:]  # Return last 2 states for simplicity
 
 async def test_streaming():
     print("Testing MCP Agent Streaming...")
     print("Type 'quit' to exit")
     
     try:
-        # Get configuration
-        config = configuration.Configuration()
-        print(f"Loaded config - User ID: {config.user_id}")
-        
-        thread_id = "test-thread-122"
-        run_config = {
-            "configurable": {
-                "user_id": config.user_id,
-                "asst_role": config.asst_role,
-                "thread_id": thread_id
-            }
-        }
-        
-        # Continuous conversation loop
-        while True:
-            query = input("\nEnter your query: ")
-            
-            if query.lower() in ['quit', 'exit']:
-                print("Goodbye!")
-                break
-            
-            # Create fresh state for new query
-            initial_state = {
-                "messages": [HumanMessage(content=query)],
-                "summary": "",
-                "initial_query": "",
-                "final_response": "",
-                "memories_retrieved": False
-            }
-            
-            
-            print(f"\nStreaming response for thread: {thread_id}")
-            print("-" * 50)
-            
-            # Wait for completion and show only final result
-            print("\n🤖 Processing...")
-            
-            # Run the graph and wait for completion
-            final_result = await graph.ainvoke(initial_state, run_config)
-            for m in final_result["messages"][-1:]:
-                m.pretty_print()
+        # Use async context manager for PostgreSQL checkpointer
+        async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+            # Setup the database schema (uncomment if needed)
+            # await checkpointer.setup()
 
-        
-            # Extract and show only the final AI response
-            # if final_result and "messages" in final_result:
-            #     messages = final_result["messages"]
-            #     for msg in reversed(messages):  # Start from the end
-            #         if hasattr(msg, 'content') and msg.content and hasattr(msg, 'type'):
-            #             if msg.type == 'ai' and not (hasattr(msg, 'tool_calls') and msg.tool_calls):
-            #                 print(f"\n🤖 Final Response: {msg.content}")
-            #                 break
+                        
+            # Create the main workflow
+            workflow = StateGraph(State, config_schema=configuration.Configuration)
+
+            # Add nodes for React Agent
+            workflow.add_node("preserve", preserve_msg)
+            workflow.add_node("assistant", assistant)
+            workflow.add_node("tools", ToolNode(tools))
+
+            workflow.add_edge(START, "preserve")
+            workflow.add_edge("preserve", "assistant")
+            workflow.add_conditional_edges("assistant", tools_condition)
+            workflow.add_edge("tools", "assistant")
+
+            react_graph = workflow.compile(checkpointer=True)
+
+            build = StateGraph(State, config_schema=configuration.Configuration)
+
+            build.add_node("react_agent", react_graph)
+            build.add_node("retrieve_memories", retrieve_memories)
+            build.add_node("store_memory", store_memory)
+            build.add_node("summarize", summarize_conversation)
+
+            # Define the flow
+            build.add_edge(START, "retrieve_memories")
+            build.add_edge("retrieve_memories", "react_agent")
+            build.add_edge("react_agent", "store_memory")
+            #build.add_conditional_edges("store_memory", should_continue)
+            build.add_conditional_edges(
+                "store_memory", 
+                should_continue,
+                {
+                    "summarize": "summarize",
+                    "__end__": END
+                }
+            )
+
+            build.add_edge("summarize", END)
+
+            # Compile the graph
+            graph = build.compile(checkpointer=checkpointer)
+
+            # Get configuration
+            config = configuration.Configuration()
+            print(f"Loaded config - User ID: {config.user_id}")
+            
+            thread_id = "test-thread-122"
+            run_config = {
+                "configurable": {
+                    "user_id": config.user_id,
+                    "asst_role": config.asst_role,
+                    "thread_id": thread_id
+                }
+            }
+            
+            # Continuous conversation loop
+            while True:
+                query = input("\nEnter your query: ")
                 
+                if query.lower() in ['quit', 'exit']:
+                    print("Goodbye!")
+                    break
+                
+                # Create fresh state for new query
+                initial_state = {
+                    "messages": [HumanMessage(content=query)],
+                    "summary": "",
+                    "initial_query": "",
+                    "final_response": "",
+                    "memories_retrieved": False
+                }
+                
+                print(f"\nStreaming response for thread: {thread_id}")
+                print("-" * 50)
+                
+                # Wait for completion and show only final result
+                print("\n🤖 Processing...")
+                
+                # Run the graph and wait for completion
+                final_result = await graph.ainvoke(initial_state, run_config)
+                for m in final_result["messages"][-1:]:
+                    m.pretty_print()
+                    
     except Exception as e:
         print(f"Error in test_streaming: {e}")
         import traceback

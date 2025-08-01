@@ -104,8 +104,8 @@ def retrieve_memories(state: State, config: RunnableConfig):
     if state.get("memories_retrieved"):
         return {"messages": []}
     
-    configurable = configuration.Configuration.from_runnable_config(config)
-    mem0_user_id = configurable.user_id
+    # configurable = configuration.Configuration.from_runnable_config(config)
+    # mem0_user_id = configurable.user_id
     
     messages = state["messages"]
     
@@ -176,11 +176,11 @@ def should_continue(state: State):
     messages = state["messages"]
     
     # Check if we need to summarize due to length
-    if len(messages) > 20:
+    if len(messages) > 10:
         return "summarize"
     
     # Otherwise, store memory and end
-    return "store_memory"
+    return "__end__"
 
 def summarize_conversation(state: State):
     """Summarize the conversation when it gets too long"""
@@ -203,29 +203,40 @@ def summarize_conversation(state: State):
 # Create the main workflow
 workflow = StateGraph(State, config_schema=configuration.Configuration)
 
-# Add nodes
+# Add nodes for React Agent
 workflow.add_node("preserve", preserve_msg)
-workflow.add_node("retrieve_memories", retrieve_memories)
 workflow.add_node("assistant", assistant)
 workflow.add_node("tools", ToolNode(tools))
-workflow.add_node("store_memory", store_memory)
-workflow.add_node("summarize", summarize_conversation)
 
-# Define the flow
 workflow.add_edge(START, "preserve")
-workflow.add_edge("preserve", "retrieve_memories")
-workflow.add_edge("retrieve_memories", "assistant")
-
-# ReAct loop: assistant -> tools -> assistant (until no more tools needed)
+workflow.add_edge("preserve", "assistant")
 workflow.add_conditional_edges("assistant", tools_condition)
 workflow.add_edge("tools", "assistant")
 
-# After assistant is done, decide next step
-workflow.add_conditional_edges("assistant", should_continue)
+react_graph = workflow.compile()
 
-# Handle memory storage and summarization
-workflow.add_edge("store_memory", END)
-workflow.add_edge("summarize", "store_memory")
+build = StateGraph(State, config_schema=configuration.Configuration)
+
+build.add_node("react_agent", react_graph)
+build.add_node("retrieve_memories", retrieve_memories)
+build.add_node("store_memory", store_memory)
+build.add_node("summarize", summarize_conversation)
+
+# Define the flow
+build.add_edge(START, "retrieve_memories")
+build.add_edge("retrieve_memories", "react_agent")
+build.add_edge("react_agent", "store_memory")
+#build.add_conditional_edges("store_memory", should_continue)
+build.add_conditional_edges(
+    "store_memory", 
+    should_continue,
+    {
+        "summarize": "summarize",
+        "__end__": END
+    }
+)
+
+build.add_edge("summarize", END)
 
 # Compile the graph
-graph = workflow.compile()
+graph = build.compile()
